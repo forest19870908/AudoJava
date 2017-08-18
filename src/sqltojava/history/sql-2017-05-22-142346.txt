@@ -1,0 +1,112 @@
+ SELECT
+ 	t1.org_id,
+ 	sum(t1.way_sale_amount) AS way_sale_amount,
+ 	sum(t1.send_no_receive_amount) AS send_no_receive_amount,
+ 	sum(t1.sign_no_receive_amount) AS sign_no_receive_amount,
+ 	sum(t1.no_send_receive_amount) AS no_send_receive_amount,
+ 	sum(t1.send_receive_amount) AS send_receive_amount
+ FROM
+ 	(
+ 		SELECT
+ 			t.id,
+ 			t.org_id,
+ 			t.way_sale_amount AS way_sale_amount,
+ 			t.receive_amount AS receive_amount,
+ 			t.sign_amount,
+ 
+ 		IF (
+ 			t.receive_amount > t.sign_amount,
+ 			t.sign_amount,
+ 			t.receive_amount
+ 		) AS sign_receive_amount,
+ 
+ 	IF (
+ 		t.receive_amount > t.sign_amount,
+ 		0,
+ 		t.sign_amount - t.receive_amount
+ 	) AS sign_no_receive_amount,
+ 
+ IF (
+ 	t.receive_amount - t.sign_amount > t.send_amount,
+ 	t.send_amount,
+ 
+ IF (
+ 	t.receive_amount - t.sign_amount > 0,
+ 	t.receive_amount - t.sign_amount,
+ 	0
+ )
+ ) AS send_receive_amount,
+ 
+ IF (
+ 	t.receive_amount - t.sign_amount > t.send_amount,
+ 	0,
+ 
+ IF (
+ 	t.receive_amount - t.sign_amount > 0,
+ 	t.send_amount + t.sign_amount - t.receive_amount,
+ 	t.send_amount
+ )
+ ) AS send_no_receive_amount,
+ 
+ IF (
+ 	t.receive_amount - t.sign_amount - t.send_amount > 0,
+ 	t.receive_amount - t.sign_amount - t.send_amount,
+ 	0
+ ) AS no_send_receive_amount
+ FROM
+ 	(
+ 		SELECT
+ 			s.id,
+ 			s.org_id,
+ 			s.amount,
+ 			s.receive_amount,
+ 			sum(
+ 
+ 				IF (
+ 					o.is_logistics = 1 && o. STATUS IN (30, 4),
+ 					od.checkout_weight * sd.real_price,
+ 					0
+ 				)
+ 			) AS way_sale_amount,
+ 			sum(
+ 
+ 				IF (
+ 					o.`status` = 5,
+ 					od.checkout_weight * sd.real_price,
+ 					0
+ 				)
+ 			) AS sign_amount,
+ 			sum(
+ 
+ 				IF (
+ 					o.`status` IN (30, 4),
+ 					od.checkout_weight * sd.real_price,
+ 					0
+ 				)
+ 			) AS send_amount
+ 		FROM
+ 			z_jxc_inventory_out_detail od,
+ 			z_jxc_inventory_out o,
+ 			z_jxc_sale_detail sd,
+ 			z_jxc_sale s
+ 		WHERE
+ 			od.pid = o.id
+ 		AND od.sale_detail_id = sd.id
+ 		AND od.sale_id = s.id
+ 		AND s.`status` !=- 1
+ 		AND NOT (
+ 			s.sign_status = 100
+ 			AND s.receive_status = 100
+ 		)
+ 		AND s.is_inner = 0
+ 		AND o.del_flag = 0
+ 		AND o.is_return = 0
+ 		AND o.`status` IN (30, 4, 5)
+ 		GROUP BY
+ 			s.id
+ 	) t
+ GROUP BY
+ 	t.id
+ 	) t1
+ GROUP BY
+ 	t1.org_id

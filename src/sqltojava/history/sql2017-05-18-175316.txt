@@ -1,0 +1,156 @@
+-- 非金融
+UPDATE z_jxc_sale_stats ss
+LEFT JOIN z_jxc_sale s ON ss.sale_id = s.id
+INNER JOIN (
+	SELECT
+		t.sale_id,
+		sum(t.fund_cost) fund_cost
+	FROM
+		(
+			(
+				SELECT
+					s1.sale_id,
+					s1.fund_cost
+				FROM
+					(
+						SELECT
+							sale_id,
+							fund_cost
+						FROM
+							bi_to_sale_fund_cost_detail_qianshou
+						WHERE
+							del_flag = 0
+						AND fund_cost != 0
+						ORDER BY
+							id DESC
+					) s1
+				GROUP BY
+					s1.sale_id
+			)
+			UNION ALL
+				(
+					SELECT
+						od.sale_id,
+						sum(dg.amount_pay) AS fund_cost
+					FROM
+						bi_to_sale_purchase_fund_cost_daigou dg,
+						z_jxc_inventory_out_detail od,
+						z_jxc_inventory_out o
+					WHERE
+						dg.inventory_out_detail_id = od.id
+					AND od.pid = o.id
+					AND o.is_return = 0
+					AND o.del_flag = 0
+					AND dg.del_flag = 0
+					GROUP BY
+						od.sale_id
+				)
+		) t
+	GROUP BY
+		t.sale_id
+) t1 ON s.id = t1.sale_id
+SET ss.fund_cost =
+IF (
+	t1.fund_cost < 0,
+	0,
+	t1.fund_cost
+)
+WHERE
+	ss.profit_calc_time_chief BETWEEN '2017-05-01 00:00:00'
+AND '2017-05-31 23:59:59'
+AND s.is_finance = 0;
+
+-- 金融
+UPDATE z_jxc_sale_stats ss
+LEFT JOIN z_jxc_sale s ON ss.sale_id = s.id
+INNER JOIN (
+	SELECT
+		t.sale_id,
+		sum(t.fund_cost) fund_cost,
+		sum(t.fund_cost_org) fund_cost_org
+	FROM
+		(
+			(
+				SELECT
+					sale_id,
+					fund_cost_delay - interest + fund_cost_account_period fund_cost,
+					fund_cost - fund_cost_account_period fund_cost_org
+				FROM
+					bi_to_sale_fund_cost
+				WHERE
+					del_flag = 0
+			)
+			UNION ALL
+				(
+					SELECT
+						od.sale_id,
+						sum(dg.amount_pay) AS fund_cost,
+						0 AS fund_cost_org
+					FROM
+						bi_to_sale_purchase_fund_cost_daigou dg,
+						z_jxc_inventory_out_detail od,
+						z_jxc_inventory_out o
+					WHERE
+						dg.inventory_out_detail_id = od.id
+					AND od.pid = o.id
+					AND o.is_return = 0
+					AND o.del_flag = 0
+					AND dg.del_flag = 0
+					GROUP BY
+						od.sale_id
+				)
+		) t
+	GROUP BY
+		t.sale_id
+) t1 ON s.id = t1.sale_id
+SET ss.fund_cost =
+IF (
+	t1.fund_cost < 0,
+	0,
+	t1.fund_cost
+),
+ ss.fund_cost_org =
+IF (
+	t1.fund_cost_org < 0,
+	0,
+	t1.fund_cost_org
+)
+WHERE
+	ss.profit_calc_time_chief BETWEEN '2017-05-01 00:00:00'
+AND '2017-05-31 23:59:59'
+AND s.is_finance = 1;
+
+-- 数据批量处理 z_jxc_sale_stats，gross_profit字段
+UPDATE z_jxc_sale_stats ss
+LEFT JOIN z_jxc_sale s ON ss.sale_id = s.id
+SET ss.gross_profit = ss.sale_purchase_diff - ss.logistics_amount - ss.accept_cost - ss.fund_cost
+WHERE
+	ss.profit_calc_time_chief BETWEEN '2017-05-01 00:00:00'
+AND '2017-05-31 23:59:59';
+
+-- 销售 gross_profit（z_jxc_sale_stats）
+UPDATE z_jxc_gross_profit_follow gf
+INNER JOIN z_jxc_sale_stats ss ON gf.sale_id = ss.sale_id
+LEFT JOIN z_jxc_sale s ON ss.sale_id = s.id
+SET gf.gross_profit = ss.gross_profit
+WHERE
+	gf.profit_calc_time_chief BETWEEN '2017-05-01 00:00:00'
+AND '2017-05-31 23:59:59'
+AND gf.type = 1;
+
+-- 将资金成本分配到销售出库明细统计中
+UPDATE z_jxc_inventory_out_detail_stats os,
+ z_jxc_inventory_out_detail od,
+ z_jxc_sale_stats ss,
+ z_jxc_sale_detail sd,
+ z_jxc_sale s
+SET os.fund_cost = ss.fund_cost * (
+	od.checkout_weight * sd.real_price
+) / s.order_amount
+WHERE
+	os.id = od.id
+AND od.sale_id = ss.sale_id
+AND od.sale_detail_id = sd.id
+AND ss.sale_id = s.id
+AND ss.profit_calc_time_chief BETWEEN '2017-05-01 00:00:00'
+AND '2017-05-31 23:59:59';
